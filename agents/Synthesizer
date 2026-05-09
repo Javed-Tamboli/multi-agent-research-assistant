@@ -1,0 +1,76 @@
+from langchain_openai import ChatOpenAI
+from langchain.schema import SystemMessage, HumanMessage
+import config
+
+
+SYNTHESIZER_SYSTEM_PROMPT = """You are a research synthesizer. You will be given:
+- A user research question
+- A list of information gathered from web search and memory
+- Conversation history for context
+
+Your job is to write a clear, structured research summary that:
+1. Directly answers the question
+2. Integrates all the provided context
+3. Is well-organized with sections where appropriate
+4. Cites information naturally (e.g. "According to [source]...")
+5. Highlights key findings, trade-offs, or recommendations
+
+Write in a professional but readable tone. Be concise but complete."""
+
+
+class SynthesizerAgent:
+    """
+    Takes gathered context from search + retrieval and produces
+    a coherent, cited research summary using GPT-4o.
+    """
+
+    def __init__(self):
+        self.llm = ChatOpenAI(
+            model=config.LLM_MODEL,
+            api_key=config.OPENAI_API_KEY,
+            temperature=0.3
+        )
+
+    def synthesize(self, query: str, context: list[str], conversation_history: list[dict]) -> str:
+        """
+        Synthesizes gathered information into a cited summary.
+
+        Args:
+            query: The original research question
+            context: List of text chunks from search and retrieval
+            conversation_history: Sliding window of prior exchanges
+
+        Returns:
+            A structured research summary string
+        """
+        if not context:
+            return "I could not find enough information to answer your query. Please try a more specific question."
+
+        # Build context block
+        context_block = "\n\n---\n\n".join(
+            [f"[Source {i+1}]: {chunk}" for i, chunk in enumerate(context)]
+        )
+
+        # Build history block (last 4 turns for context)
+        recent_history = conversation_history[-8:] if len(conversation_history) > 8 else conversation_history
+        history_text = ""
+        if recent_history:
+            history_text = "\n\nPrevious conversation:\n" + "\n".join(
+                [f"{turn['role'].upper()}: {turn['content']}" for turn in recent_history]
+            )
+
+        user_prompt = f"""Research Question: {query}
+{history_text}
+
+Gathered Information:
+{context_block}
+
+Please synthesize the above into a well-structured research summary."""
+
+        messages = [
+            SystemMessage(content=SYNTHESIZER_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt)
+        ]
+
+        response = self.llm.invoke(messages)
+        return response.content
